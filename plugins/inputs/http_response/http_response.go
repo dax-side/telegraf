@@ -426,6 +426,14 @@ func (h *HTTPResponse) httpGather(cl client) (map[string]any, map[string]string,
 		h.setBodyReadError("The body of the HTTP Response is too large", bodyBytes, fields, tags)
 		return fields, tags, nil
 	} else if err != nil {
+		// The response timeout also covers reading the body, so report it as
+		// a timeout and not as a body read error
+		var timeoutError net.Error
+		if errors.As(err, &timeoutError) && timeoutError.Timeout() {
+			h.Log.Debugf("Timeout while reading body of HTTP Response from %s: %s", cl.address, err.Error())
+			setResult("timeout", fields, tags)
+			return fields, tags, nil
+		}
 		h.setBodyReadError("Failed to read body of HTTP Response : "+err.Error(), bodyBytes, fields, tags)
 		return fields, tags, nil
 	}

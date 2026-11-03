@@ -1068,6 +1068,52 @@ func TestTimeout(t *testing.T) {
 	checkOutput(t, &acc, expectedFields, expectedTags, absentFields, absentTags)
 }
 
+func TestTimeoutDuringBodyRead(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping test with timeout in short mode.")
+	}
+
+	// Send the headers and a part of the body, then stall until the client
+	// gives up on the request
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		w.Header().Set("Content-Length", "1000")
+		w.WriteHeader(http.StatusOK)
+		if _, err := w.Write([]byte("partial")); err != nil {
+			t.Error(err)
+			return
+		}
+		w.(http.Flusher).Flush()
+		<-req.Context().Done()
+	}))
+	defer ts.Close()
+
+	h := &HTTPResponse{
+		Log:             testutil.Logger{},
+		URLs:            []string{ts.URL},
+		Method:          "GET",
+		ResponseTimeout: config.Duration(time.Second),
+	}
+
+	var acc testutil.Accumulator
+	require.NoError(t, h.Init())
+	require.NoError(t, h.Gather(&acc))
+
+	expectedFields := map[string]any{
+		"http_response_code": http.StatusOK,
+		"result_type":        "timeout",
+		"result_code":        4,
+		"response_time":      nil,
+	}
+	expectedTags := map[string]any{
+		"server":      nil,
+		"method":      "GET",
+		"status_code": "200",
+		"result":      "timeout",
+	}
+	absentFields := []string{"content_length", "response_string_match"}
+	checkOutput(t, &acc, expectedFields, expectedTags, absentFields, nil)
+}
+
 func TestBadRegex(t *testing.T) {
 	mux := setUpTestMux()
 	ts := httptest.NewServer(mux)
